@@ -118,3 +118,63 @@ jobs:
         run: |
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/api-final:latest
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/api-final:${{ github.sha }}
+
+  deploy:
+    name: Deploy Docker container on VM
+    needs:
+      - unit-tests
+      - e2e-tests
+      - build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Installer sshpass
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Déployer sur la VM
+        env:
+          SSH_PASSWORD: 'Supermotdepasse!42'
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          sshpass -p "$SSH_PASSWORD" ssh \
+            -o StrictHostKeyChecking=no \
+            ubuntu@20.56.74.49 << EOF
+
+            set -e
+
+            echo "Connexion à la VM réussie"
+
+            echo "Connexion à Docker Hub..."
+            echo "$DOCKERHUB_PASSWORD" | docker login \
+              -u "$DOCKERHUB_USERNAME" \
+              --password-stdin
+
+            echo "Récupération de la nouvelle image..."
+            docker pull "$DOCKERHUB_USERNAME/api-final:latest"
+
+            echo "Arrêt de l'ancien conteneur..."
+            docker stop api-final 2>/dev/null || true
+
+            echo "Suppression de l'ancien conteneur..."
+            docker rm api-final 2>/dev/null || true
+
+            echo "Lancement du nouveau conteneur..."
+            docker run -d \
+              --name api-final \
+              --restart unless-stopped \
+              -p 49152:3000 \
+              "$DOCKERHUB_USERNAME/api-final:latest"
+
+            echo "Conteneur lancé"
+
+            docker ps
+
+          EOF
+        env:
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+
