@@ -1,0 +1,122 @@
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  # ==================================================
+  # JOB 1 : UNIT TESTS
+  # ==================================================
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: |
+          PYTHONPATH=. pytest test/test_unit.py -v
+
+
+  # ==================================================
+  # JOB 2 : E2E TESTS
+  # ==================================================
+  e2e-tests:
+    name: E2E tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start Flask application
+        run: |
+          nohup python app.py > flask.log 2>&1 &
+
+      - name: Wait for application
+        run: |
+          for i in {1..30}; do
+            if curl -f http://127.0.0.1:3000/health; then
+              echo "Application is ready"
+              exit 0
+            fi
+
+            echo "Waiting for application..."
+            sleep 1
+          done
+
+          echo "Application failed to start"
+          cat flask.log
+          exit 1
+
+      - name: Run E2E tests
+        run: |
+          PYTHONPATH=. pytest test/test_e2e.py -v
+
+
+  # ==================================================
+  # JOB 3 : BUILD & PUSH DOCKER HUB
+  # ==================================================
+  build-and-push:
+    name: Build & Push Docker Hub
+
+    # IMPORTANT :
+    # Ce job ne démarre que si les deux jobs précédents
+    # ont réussi.
+    needs:
+      - unit-tests
+      - e2e-tests
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Connexion à Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Build de l'image
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/api-final:latest \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/api-final:${{ github.sha }} \
+            .
+
+      # Push vers Docker Hub
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/api-final:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/api-final:${{ github.sha }}
+```
